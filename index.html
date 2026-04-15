@@ -124,14 +124,6 @@
     .game-list-scroll::-webkit-scrollbar { display: none; }
 
     .game-thumb {
-      /* Stagger reveal — each item activates along its own slice of the
-         --open timeline. Because --open is a registered @property, all of
-         these calc-derived values interpolate during the snap animation and
-         track the finger during drag. */
-      --stagger-start: calc(0.08 + var(--i, 0) * 0.035);
-      --stagger-span:  0.35;
-      --stagger-p:     calc((var(--open) - var(--stagger-start)) / var(--stagger-span));
-
       flex: 0 0 auto;
       width: var(--thumb-size);
       height: var(--thumb-size);
@@ -143,15 +135,11 @@
       cursor: pointer;
       border: 0;
       padding: 0;
-      opacity: clamp(0, var(--stagger-p), 1);
-      /* Enter from the right, tracking the panel's direction of motion. */
-      transform: translate3d(
-        calc((1 - clamp(0, var(--stagger-p), 1)) * 20px),
-        0,
-        0
-      );
+      /* Start hidden — Motion stagger plays the entrance top→bottom */
+      opacity: 0;
+      transform: translate3d(0, 12px, 0);
+      will-change: transform, opacity;
     }
-    .game-thumb:active { transform: scale(0.96); transition: transform 120ms ease; }
     .game-thumb img {
       width: 100%;
       height: 100%;
@@ -234,6 +222,10 @@
     .icon-btn.surface-light {
       background: var(--white);
       color: var(--deep-signal);
+      /* Figma Shadow/Default — two-layer elevation on light-on-dark buttons */
+      box-shadow:
+        0 1px 2px 0 rgba(0, 0, 0, 0.12),
+        0 0 1px 0 rgba(0, 0, 0, 0.18);
     }
     .icon-btn.surface-outline {
       background: var(--white-12);
@@ -499,7 +491,7 @@
   <script type="module">
     // Motion One — vanilla-JS sibling of Framer Motion (same spring engine,
     // same author). Pulled from ESM CDN; no build step.
-    import { animate } from "https://cdn.jsdelivr.net/npm/motion@11.11.17/+esm";
+    import { animate, stagger } from "https://cdn.jsdelivr.net/npm/motion@11.11.17/+esm";
 
     const reveal   = document.getElementById('reveal');
     const gameList = document.getElementById('gameList');
@@ -510,9 +502,15 @@
     const VELOCITY_SNAP = 0.5;         // px/ms flick threshold
     const DISTANCE_SNAP = PANEL * 0.3; // commit when past 30% of panel
 
-    // Spring tuned for a crisp reveal — firm enough that the stagger lands
-    // before you notice, loose enough that the last item has a hint of bounce.
-    const SPRING = { type: 'spring', stiffness: 420, damping: 38, mass: 1 };
+    // Spring for the panel slide — firm but with a touch of settle.
+    const PANEL_SPRING = { type: 'spring', stiffness: 380, damping: 34, mass: 1 };
+
+    // Item entrance: top → bottom, one-by-one. 50ms between items × 12 items
+    // = 550ms total cascade, each item's own fade/slide is 320ms.
+    const ITEM_ENTER_EACH = { duration: 0.32, easing: [0.2, 0.7, 0.2, 1] };
+    const ITEM_STAGGER    = 0.05;
+
+    const thumbs = Array.from(document.querySelectorAll('.game-thumb'));
 
     let state = 'closed';   // 'closed' | 'open'
     let dragging = false;
@@ -521,7 +519,8 @@
     let basePx = 0;
     let pointerId = null;
     let axisLocked = null;  // 'x' | 'y' | null
-    let currentAnim = null; // handle to Motion animation, so we can cancel on drag
+    let panelAnim = null;   // Motion handle for --open (panel slide)
+    let itemsAnim = null;   // Motion handle for item stagger
 
     const readOpen = () =>
       parseFloat(getComputedStyle(reveal).getPropertyValue('--open')) || 0;
@@ -533,24 +532,59 @@
 
     const setOpenPx = (px) => writeOpen(px / PANEL);
 
-    // Commit to an end state with spring animation.
-    // Because --open is a registered @property, Motion interpolates it
-    // smoothly — and every calc() downstream (main shift, panel slide,
-    // per-item stagger) inherits the spring automatically.
+    // Hide all thumbs instantly (used when closing or on init).
+    const resetThumbs = () => {
+      itemsAnim?.stop?.();
+      for (const el of thumbs) {
+        el.style.opacity = '0';
+        el.style.transform = 'translate3d(0, 12px, 0)';
+      }
+    };
+
+    // Play the staggered entrance — top item first, then each successive one
+    // after ITEM_STAGGER seconds. Uses Motion's stagger() helper.
+    const playItemStagger = () => {
+      itemsAnim?.stop?.();
+      itemsAnim = animate(
+        thumbs,
+        { opacity: [0, 1], transform: ['translate3d(0,12px,0)', 'translate3d(0,0,0)'] },
+        { ...ITEM_ENTER_EACH, delay: stagger(ITEM_STAGGER) }
+      );
+    };
+
+    // Commit to an end state.
+    //   • Panel slide: spring-animated --open (CSS calc shifts main + panel)
+    //   • Items: Motion stagger on open; instant hide on close
     const snapTo = (target /* 0 | 1 */) => {
-      currentAnim?.stop();
+      panelAnim?.stop?.();
       const newState = target === 1 ? 'open' : 'closed';
+      const wasState = state;
       state = newState;
       reveal.classList.toggle('open', newState === 'open');
       gameList.setAttribute('aria-hidden', newState === 'open' ? 'false' : 'true');
       if ('inert' in gameList) gameList.inert = newState !== 'open';
       scrim.setAttribute('aria-hidden', newState === 'open' ? 'false' : 'true');
 
-      currentAnim = animate(
-        (progress) => writeOpen(progress),
-        { from: readOpen(), to: target },
-        SPRING
+      // Panel slide — animate the registered custom property with a spring.
+      // Keyframe array lets us start exactly from drag-released position.
+      panelAnim = animate(
+        reveal,
+        { '--open': [readOpen(), target] },
+        PANEL_SPRING
       );
+
+      // Items
+      if (newState === 'open') {
+        playItemStagger();
+      } else if (wasState === 'open') {
+        // Closing: fade items quickly so they don't linger past the panel.
+        itemsAnim?.stop?.();
+        itemsAnim = animate(
+          thumbs,
+          { opacity: 0, transform: 'translate3d(0,12px,0)' },
+          { duration: 0.15, easing: 'easeIn' }
+        );
+      }
     };
 
     const onPointerDown = (e) => {
@@ -564,7 +598,7 @@
       velocity = 0;
       basePx = readOpen() * PANEL;
       // Cancel any in-flight spring so drag takes over cleanly
-      currentAnim?.stop();
+      panelAnim?.stop?.();
       e.target.setPointerCapture?.(pointerId);
     };
 
@@ -635,6 +669,7 @@
 
     // Initial state — closed, no animation
     writeOpen(0);
+    resetThumbs();
     if ('inert' in gameList) gameList.inert = true;
   </script>
 </body>
