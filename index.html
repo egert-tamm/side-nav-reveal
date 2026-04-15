@@ -150,15 +150,26 @@
       -webkit-user-drag: none;
     }
 
-    /* Bottom fade masking scroll content */
+    /* Scroll affordance — fades appear only when there's content in that
+       direction. Opacity driven by JS on scroll. */
     .game-list-fade {
       position: absolute;
       left: 0;
       right: 0;
+      pointer-events: none;
+      transition: opacity 160ms ease-out;
+    }
+    .game-list-fade.top {
+      top: 0;
+      height: 56px;
+      background: linear-gradient(to top, rgba(0,0,0,0) 0%, #000 100%);
+      opacity: var(--fade-top, 0);
+    }
+    .game-list-fade.bottom {
       bottom: 0;
       height: 145px;
-      pointer-events: none;
       background: linear-gradient(to bottom, rgba(0,0,0,0) 0%, #000 88%);
+      opacity: var(--fade-bottom, 0);
     }
 
     /* Right-edge grab zone — only active when closed */
@@ -500,7 +511,8 @@
           <img src="https://www.figma.com/api/mcp/asset/ddf122c9-f8c8-43e4-b0e1-8df55cad9fee" alt="">
         </button>
       </div>
-      <div class="game-list-fade" aria-hidden="true"></div>
+      <div class="game-list-fade top" aria-hidden="true"></div>
+      <div class="game-list-fade bottom" aria-hidden="true"></div>
     </aside>
 
     <!-- Scrim: catches taps / close-swipe on the main content while open -->
@@ -518,10 +530,11 @@
     // same author). Pulled from ESM CDN; no build step.
     import { animate, stagger } from "https://cdn.jsdelivr.net/npm/motion@11.11.17/+esm";
 
-    const reveal   = document.getElementById('reveal');
-    const gameList = document.getElementById('gameList');
-    const edgeGrab = document.getElementById('edgeGrab');
-    const scrim    = document.getElementById('scrim');
+    const reveal         = document.getElementById('reveal');
+    const gameList       = document.getElementById('gameList');
+    const gameListScroll = document.getElementById('gameListScroll');
+    const edgeGrab       = document.getElementById('edgeGrab');
+    const scrim          = document.getElementById('scrim');
 
     const PANEL = 88;                  // must match --panel-width
     const VELOCITY_SNAP = 0.5;         // px/ms flick threshold
@@ -556,6 +569,32 @@
     };
 
     const setOpenPx = (px) => writeOpen(px / PANEL);
+
+    // ---- Scroll affordance fades ------------------------------------------
+    // Top fades in as user scrolls down; bottom fades out as they reach end.
+    // Fades interpolate linearly over the first/last FADE_RANGE px.
+    const FADE_RANGE = 40;
+    let fadeRaf = 0;
+    const updateFades = () => {
+      fadeRaf = 0;
+      const s = gameListScroll;
+      const overflow = s.scrollHeight - s.clientHeight;
+      if (overflow <= 0) {
+        reveal.style.setProperty('--fade-top', '0');
+        reveal.style.setProperty('--fade-bottom', '0');
+        return;
+      }
+      const fromTop    = s.scrollTop;
+      const fromBottom = overflow - s.scrollTop;
+      reveal.style.setProperty('--fade-top',    String(Math.min(1, fromTop / FADE_RANGE)));
+      reveal.style.setProperty('--fade-bottom', String(Math.min(1, fromBottom / FADE_RANGE)));
+    };
+    gameListScroll.addEventListener('scroll', () => {
+      if (fadeRaf) return;
+      fadeRaf = requestAnimationFrame(updateFades);
+    }, { passive: true });
+    // Recompute on viewport changes (orientation, keyboard, etc.)
+    window.addEventListener('resize', updateFades);
 
     // Hide all thumbs instantly (used when closing or on init).
     const resetThumbs = () => {
@@ -696,6 +735,7 @@
     writeOpen(0);
     resetThumbs();
     if ('inert' in gameList) gameList.inert = true;
+    updateFades();
   </script>
 </body>
 </html>
