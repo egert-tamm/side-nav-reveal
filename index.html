@@ -1,0 +1,638 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <title>Game view</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    /* Register --open so it can interpolate smoothly.
+       Every downstream derivation (main shift, panel slide, per-item stagger)
+       inherits a single synchronized timeline. */
+    @property --open {
+      syntax: '<number>';
+      initial-value: 0;
+      inherits: true;
+    }
+
+    :root {
+      /* Colors */
+      --black: #000;
+      --white: #fff;
+      --white-08: rgba(255, 255, 255, 0.08);
+      --white-12: rgba(255, 255, 255, 0.12);
+      --white-40: rgba(255, 255, 255, 0.4);
+      --white-64: rgba(255, 255, 255, 0.64);
+      --deep-signal: #111b29;
+      --deep-signal-06: rgba(17, 27, 41, 0.06);
+      --lime-flash: #9eff78;
+      --lime-flash-32: rgba(158, 255, 120, 0.32);
+      --iframe-bg: #111111;
+
+      /* Spacing */
+      --gap-4: 4px;
+      --gap-8: 8px;
+      --gap-12: 12px;
+      --gap-16: 16px;
+
+      /* Radius */
+      --radius-full: 9999px;
+      --radius-lg: 20px;
+
+      /* Type */
+      --font-secondary: "DM Sans", sans-serif;
+
+      /* Reveal drawer geometry */
+      --panel-width: 88px;      /* full visual width of right nav */
+      --content-shift: 84px;    /* how far the main content slides left */
+      --thumb-size: 56px;
+      --panel-padding: 16px;
+
+      /* Drawer progress — 0 closed, 1 open; updated by JS during drag */
+      --open: 0;
+      --drag-duration: 260ms;
+      --drag-ease: cubic-bezier(.22, .61, .36, 1);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100%; }
+
+    body {
+      background: var(--black);
+      color: var(--white);
+      font-family: var(--font-secondary);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      overscroll-behavior: none;
+      overflow: hidden; /* drawer handles its own overflow */
+    }
+
+    /* ---------- Reveal container ---------- */
+    .reveal {
+      position: fixed;
+      inset: 0;
+      overflow: hidden;
+      background: var(--black);
+      /* isolate so child transforms don't paint outside during drag */
+      isolation: isolate;
+      /* Snap animation is driven by Motion One via JS (spring physics).
+         Drag path writes --open directly. No CSS transition needed here. */
+    }
+
+    /* Main game view shifts left as drawer opens */
+    .screen {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      padding: var(--gap-16);
+      gap: var(--gap-12);
+      transform: translate3d(calc(var(--open) * calc(var(--content-shift) * -1)), 0, 0);
+      will-change: transform;
+    }
+
+    /* Right-side vertical game list */
+    .game-list {
+      position: absolute;
+      top: 0;
+      right: 0;
+      height: 100%;
+      width: var(--panel-width);
+      /* Closed: panel sits fully off-screen to the right.
+         Open: panel slides in to rest flush with the right edge. */
+      transform: translate3d(calc(var(--panel-width) * (1 - var(--open))), 0, 0);
+      will-change: transform;
+      border-left: 1px solid var(--white-08);
+    }
+
+    .game-list-scroll {
+      height: 100%;
+      padding: var(--panel-padding);
+      display: flex;
+      flex-direction: column;
+      gap: var(--gap-16);
+      overflow-y: auto;
+      overflow-x: hidden;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+    }
+    .game-list-scroll::-webkit-scrollbar { display: none; }
+
+    .game-thumb {
+      /* Stagger reveal — each item activates along its own slice of the
+         --open timeline. Because --open is a registered @property, all of
+         these calc-derived values interpolate during the snap animation and
+         track the finger during drag. */
+      --stagger-start: calc(0.08 + var(--i, 0) * 0.035);
+      --stagger-span:  0.35;
+      --stagger-p:     calc((var(--open) - var(--stagger-start)) / var(--stagger-span));
+
+      flex: 0 0 auto;
+      width: var(--thumb-size);
+      height: var(--thumb-size);
+      border-radius: 16px;
+      overflow: hidden;
+      background: var(--white-08);
+      display: block;
+      position: relative;
+      cursor: pointer;
+      border: 0;
+      padding: 0;
+      opacity: clamp(0, var(--stagger-p), 1);
+      /* Enter from the right, tracking the panel's direction of motion. */
+      transform: translate3d(
+        calc((1 - clamp(0, var(--stagger-p), 1)) * 20px),
+        0,
+        0
+      );
+    }
+    .game-thumb:active { transform: scale(0.96); transition: transform 120ms ease; }
+    .game-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      pointer-events: none;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+
+    /* Bottom fade masking scroll content */
+    .game-list-fade {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 145px;
+      pointer-events: none;
+      background: linear-gradient(to bottom, rgba(0,0,0,0) 0%, #000 88%);
+    }
+
+    /* Right-edge grab zone — only active when closed */
+    .edge-grab {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      right: 0;
+      width: 24px;
+      z-index: 3;
+      touch-action: none; /* we own this gesture */
+    }
+    .reveal.open .edge-grab { display: none; }
+
+    /* When open, a transparent scrim covers the main content to absorb taps
+       and swipe-to-close. No visual dim. */
+    .scrim {
+      position: absolute;
+      inset: 0;
+      right: var(--panel-width);
+      z-index: 2;
+      display: none;
+      touch-action: none;
+    }
+    .reveal.open .scrim { display: block; }
+
+    /* ---------- Header ---------- */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--gap-8);
+    }
+    .header-aside {
+      display: flex;
+      align-items: center;
+      gap: var(--gap-8);
+    }
+
+    .icon-btn {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      padding: 0;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: var(--radius-full);
+      color: currentColor;
+      transition: transform 120ms ease, background-color 120ms ease;
+    }
+    .icon-btn:active { transform: scale(0.96); }
+    .icon-btn:focus-visible {
+      outline: 2px solid var(--lime-flash);
+      outline-offset: 2px;
+    }
+    .icon-btn.md { width: 44px; height: 44px; }
+    .icon-btn.lg { width: 56px; height: 56px; }
+    .icon-btn.surface-light {
+      background: var(--white);
+      color: var(--deep-signal);
+    }
+    .icon-btn.surface-outline {
+      background: var(--white-12);
+      color: var(--white);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+    }
+
+    /* Rakeback pill */
+    .rakeback {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--gap-4);
+      padding: var(--gap-12);
+      background: var(--white-12);
+      border-radius: var(--radius-full);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 0;
+      color: var(--white);
+      font-family: var(--font-secondary);
+      font-weight: 700;
+      font-size: 14px;
+      line-height: 20px;
+      cursor: pointer;
+    }
+    .rakeback .coin {
+      width: 24px;
+      height: 24px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      filter: drop-shadow(0 0 12px var(--lime-flash-32));
+    }
+    .rakeback .amount { padding: 0 var(--gap-4); }
+
+    /* ---------- Game iframe area ---------- */
+    .game {
+      flex: 1 1 auto;
+      background: var(--iframe-bg);
+      border-radius: var(--radius-lg);
+      min-height: 0;
+      position: relative;
+      overflow: hidden;
+    }
+    .game iframe {
+      width: 100%;
+      height: 100%;
+      border: 0;
+      display: block;
+    }
+
+    /* ---------- Bottom dock ---------- */
+    .bottom {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--gap-8);
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+
+    .island {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 56px;
+      background: var(--white-12);
+      border-radius: var(--radius-full);
+      overflow: hidden;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+    }
+    .island-btn {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      width: 52px;
+      height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--white);
+      cursor: pointer;
+      border-radius: var(--radius-full);
+      transition: background-color 120ms ease, transform 120ms ease;
+    }
+    .island-btn:active { transform: scale(0.94); }
+    .island-btn:focus-visible { outline: 2px solid var(--lime-flash); outline-offset: -2px; }
+    .island-btn.active { background: var(--deep-signal-06); }
+
+    /* ---------- Session timer ---------- */
+    .session-timer {
+      position: fixed;
+      left: 50%;
+      transform: translateX(-50%);
+      bottom: calc(env(safe-area-inset-bottom) + 4px);
+      font-family: var(--font-secondary);
+      font-size: 10px;
+      line-height: 12px;
+      color: var(--white-40);
+      letter-spacing: 0.02em;
+      font-variant-numeric: tabular-nums;
+      pointer-events: none;
+      user-select: none;
+      z-index: 4;
+    }
+
+    .i24 { width: 24px; height: 24px; display: block; }
+    .i20 { width: 20px; height: 20px; display: block; }
+
+</style>
+</head>
+<body>
+  <div class="reveal" id="reveal">
+
+    <!-- ============ Main screen (shifts left when drawer opens) ============ -->
+    <main class="screen" id="screen" role="main">
+      <!-- Header -->
+      <header class="header" aria-label="Game header">
+        <button class="icon-btn md surface-light" type="button" aria-label="Add funds (balance € 290,61)">
+          <svg class="i20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M10 4.5v11M4.5 10h11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </button>
+
+        <button class="rakeback" type="button" aria-label="Rakeback 0.84">
+          <span class="coin" aria-hidden="true">
+            <svg class="i20" viewBox="0 0 20 20" fill="none">
+              <circle cx="10" cy="10" r="9" stroke="var(--lime-flash)" stroke-width="1.5"/>
+              <rect x="10" y="4.5" width="7.778" height="7.778" rx="1"
+                    transform="rotate(45 10 4.5)" stroke="var(--lime-flash)" stroke-width="1.5"/>
+            </svg>
+          </span>
+          <span class="amount">0.84</span>
+        </button>
+
+        <div class="header-aside">
+          <button class="icon-btn md surface-outline" type="button" aria-label="Info">
+            <svg class="i24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.5"/>
+              <path d="M12 10.5v6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              <circle cx="12" cy="8" r="1" fill="currentColor"/>
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- Game iframe container -->
+      <section class="game" aria-label="Game">
+        <!-- <iframe src="..." title="Game" allowfullscreen></iframe> -->
+      </section>
+
+      <!-- Bottom dock -->
+      <nav class="bottom" aria-label="Game controls">
+        <button class="icon-btn lg surface-outline" type="button" aria-label="Back">
+          <svg class="i24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M14.5 6.5 9 12l5.5 5.5" stroke="currentColor" stroke-width="1.75"
+                  stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+
+        <div class="island" role="tablist">
+          <button class="island-btn active" type="button" role="tab" aria-selected="true" aria-label="Feed">
+            <svg class="i24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M4.5 8.5v9.25A2.25 2.25 0 0 0 6.75 20h10.5a2.25 2.25 0 0 0 2.25-2.25V8.5"
+                    stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              <rect x="3" y="5.5" width="18" height="4" rx="1.25" stroke="currentColor" stroke-width="1.5"/>
+              <path d="M10 12.5h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+          </button>
+          <button class="island-btn" type="button" role="tab" aria-label="Search">
+            <svg class="i24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="11" cy="11" r="6" stroke="currentColor" stroke-width="1.5"/>
+              <path d="m15.5 15.5 4 4" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+              <path d="M18 5.5c0 1-.5 1.5-1.5 1.5 1 0 1.5.5 1.5 1.5 0-1 .5-1.5 1.5-1.5-1 0-1.5-.5-1.5-1.5Z"
+                    stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <button class="island-btn" type="button" role="tab" aria-label="AI magic">
+            <svg class="i24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 3.5 13.4 8l4.6 1.4-4.6 1.4L12 15.5l-1.4-4.7L6 9.4 10.6 8 12 3.5Z"
+                    stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+              <path d="M18 14.5c0 1.3-.7 2-2 2 1.3 0 2 .7 2 2 0-1.3.7-2 2-2-1.3 0-2-.7-2-2Z"
+                    stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <button class="island-btn" type="button" role="tab" aria-label="Profile">
+            <svg class="i24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.5"/>
+              <circle cx="12" cy="10" r="3" stroke="currentColor" stroke-width="1.5"/>
+              <path d="M6.3 18.5c1.1-2 3.2-3.3 5.7-3.3s4.6 1.3 5.7 3.3"
+                    stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+          </button>
+        </div>
+
+        <button class="icon-btn lg surface-outline" type="button" aria-label="Fullscreen">
+          <svg class="i24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M5 9V6.5A1.5 1.5 0 0 1 6.5 5H9M15 5h2.5A1.5 1.5 0 0 1 19 6.5V9M19 15v2.5a1.5 1.5 0 0 1-1.5 1.5H15M9 19H6.5A1.5 1.5 0 0 1 5 17.5V15"
+                  stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </nav>
+    </main>
+
+    <!-- ============ Right-side game list panel ============ -->
+    <!-- NOTE: Figma thumbnail URLs expire in 7 days; engineering should swap for
+         CDN-hosted game covers and populate from the games catalog API. -->
+    <aside class="game-list" id="gameList" role="navigation" aria-label="Quick games" aria-hidden="true">
+      <div class="game-list-scroll" id="gameListScroll">
+        <button class="game-thumb" style="--i:0"  type="button" aria-label="Game 1">
+          <img src="https://www.figma.com/api/mcp/asset/9a4bf8a8-a390-4438-92d6-d1c61c4f8370" alt="">
+        </button>
+        <button class="game-thumb" style="--i:1"  type="button" aria-label="Game 2">
+          <img src="https://www.figma.com/api/mcp/asset/6437ddfa-55ed-4fcc-9f94-2abbdf4aee8a" alt="">
+        </button>
+        <button class="game-thumb" style="--i:2"  type="button" aria-label="Game 3">
+          <img src="https://www.figma.com/api/mcp/asset/621ba9d9-e523-4925-9fb7-71184b374270" alt="">
+        </button>
+        <button class="game-thumb" style="--i:3"  type="button" aria-label="Game 4">
+          <img src="https://www.figma.com/api/mcp/asset/913d2893-ceea-4ffb-897c-618af8313363" alt="">
+        </button>
+        <button class="game-thumb" style="--i:4"  type="button" aria-label="Starlight Princess">
+          <img src="https://www.figma.com/api/mcp/asset/57229cdd-cc18-44bd-acb0-d3a2f4a311f7" alt="">
+        </button>
+        <button class="game-thumb" style="--i:5"  type="button" aria-label="Jokers">
+          <img src="https://www.figma.com/api/mcp/asset/5ba424e6-6e17-4b94-87d9-bc09d4312856" alt="">
+        </button>
+        <button class="game-thumb" style="--i:6"  type="button" aria-label="Lucky Phoenix">
+          <img src="https://www.figma.com/api/mcp/asset/8a8fb707-eed7-4a8b-bb24-d6d394f70255" alt="">
+        </button>
+        <button class="game-thumb" style="--i:7"  type="button" aria-label="Sweet Bonanza 1000">
+          <img src="https://www.figma.com/api/mcp/asset/72bd37fb-59ce-46b7-8123-10177bf1b707" alt="">
+        </button>
+        <button class="game-thumb" style="--i:8"  type="button" aria-label="Sugar Rush Bonanza">
+          <img src="https://www.figma.com/api/mcp/asset/fc1de4e6-8597-426d-95ba-e3aef6b58609" alt="">
+        </button>
+        <button class="game-thumb" style="--i:9"  type="button" aria-label="Sweet Bonanza 1000">
+          <img src="https://www.figma.com/api/mcp/asset/48e78cf7-a0f5-47a8-92fd-34f433f57ba5" alt="">
+        </button>
+        <button class="game-thumb" style="--i:10" type="button" aria-label="Genie's Bonanza">
+          <img src="https://www.figma.com/api/mcp/asset/1473cf8a-a876-493f-993a-7c2104e35dd9" alt="">
+        </button>
+        <button class="game-thumb" style="--i:11" type="button" aria-label="Game 12">
+          <img src="https://www.figma.com/api/mcp/asset/ddf122c9-f8c8-43e4-b0e1-8df55cad9fee" alt="">
+        </button>
+      </div>
+      <div class="game-list-fade" aria-hidden="true"></div>
+    </aside>
+
+    <!-- Scrim: catches taps / close-swipe on the main content while open -->
+    <div class="scrim" id="scrim" aria-hidden="true"></div>
+
+    <!-- Right-edge grab strip: starts the open gesture -->
+    <div class="edge-grab" id="edgeGrab" aria-hidden="true"></div>
+
+    <!-- Session timer -->
+    <div class="session-timer" aria-label="Session duration">00:50</div>
+  </div>
+
+  <script type="module">
+    // Motion One — vanilla-JS sibling of Framer Motion (same spring engine,
+    // same author). Pulled from ESM CDN; no build step.
+    import { animate } from "https://cdn.jsdelivr.net/npm/motion@11.11.17/+esm";
+
+    const reveal   = document.getElementById('reveal');
+    const gameList = document.getElementById('gameList');
+    const edgeGrab = document.getElementById('edgeGrab');
+    const scrim    = document.getElementById('scrim');
+
+    const PANEL = 88;                  // must match --panel-width
+    const VELOCITY_SNAP = 0.5;         // px/ms flick threshold
+    const DISTANCE_SNAP = PANEL * 0.3; // commit when past 30% of panel
+
+    // Spring tuned for a crisp reveal — firm enough that the stagger lands
+    // before you notice, loose enough that the last item has a hint of bounce.
+    const SPRING = { type: 'spring', stiffness: 420, damping: 38, mass: 1 };
+
+    let state = 'closed';   // 'closed' | 'open'
+    let dragging = false;
+    let startX = 0, startY = 0, lastX = 0, lastT = 0;
+    let velocity = 0;
+    let basePx = 0;
+    let pointerId = null;
+    let axisLocked = null;  // 'x' | 'y' | null
+    let currentAnim = null; // handle to Motion animation, so we can cancel on drag
+
+    const readOpen = () =>
+      parseFloat(getComputedStyle(reveal).getPropertyValue('--open')) || 0;
+
+    const writeOpen = (v) => {
+      const clamped = Math.max(0, Math.min(1, v));
+      reveal.style.setProperty('--open', String(clamped));
+    };
+
+    const setOpenPx = (px) => writeOpen(px / PANEL);
+
+    // Commit to an end state with spring animation.
+    // Because --open is a registered @property, Motion interpolates it
+    // smoothly — and every calc() downstream (main shift, panel slide,
+    // per-item stagger) inherits the spring automatically.
+    const snapTo = (target /* 0 | 1 */) => {
+      currentAnim?.stop();
+      const newState = target === 1 ? 'open' : 'closed';
+      state = newState;
+      reveal.classList.toggle('open', newState === 'open');
+      gameList.setAttribute('aria-hidden', newState === 'open' ? 'false' : 'true');
+      if ('inert' in gameList) gameList.inert = newState !== 'open';
+      scrim.setAttribute('aria-hidden', newState === 'open' ? 'false' : 'true');
+
+      currentAnim = animate(
+        (progress) => writeOpen(progress),
+        { from: readOpen(), to: target },
+        SPRING
+      );
+    };
+
+    const onPointerDown = (e) => {
+      if (e.button != null && e.button !== 0) return;
+      pointerId = e.pointerId;
+      dragging = true;
+      axisLocked = null;
+      startX = lastX = e.clientX;
+      startY = e.clientY;
+      lastT = e.timeStamp;
+      velocity = 0;
+      basePx = readOpen() * PANEL;
+      // Cancel any in-flight spring so drag takes over cleanly
+      currentAnim?.stop();
+      e.target.setPointerCapture?.(pointerId);
+    };
+
+    const onPointerMove = (e) => {
+      if (!dragging || e.pointerId !== pointerId) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+
+      // Axis lock: if the first significant move is vertical, release and let
+      // native vertical scroll inside the panel (or the main view) take over.
+      if (axisLocked == null) {
+        if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+        axisLocked = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+        if (axisLocked === 'y') { dragging = false; return; }
+      }
+
+      e.preventDefault();
+
+      // Leftward drag (negative dx) opens. Express as positive panel-px offset.
+      setOpenPx(basePx + (-dx));
+
+      // Smoothed velocity for flick detection (leftward positive, px/ms)
+      const dt = Math.max(1, e.timeStamp - lastT);
+      const instV = (lastX - e.clientX) / dt;
+      velocity = velocity * 0.7 + instV * 0.3;
+      lastX = e.clientX;
+      lastT = e.timeStamp;
+    };
+
+    const onPointerUp = (e) => {
+      if (!dragging || e.pointerId !== pointerId) return;
+      dragging = false;
+      e.target.releasePointerCapture?.(pointerId);
+      pointerId = null;
+
+      if (axisLocked !== 'x') {
+        // Not a horizontal drag — treat tap on scrim as close.
+        if (state === 'open' && e.currentTarget === scrim) snapTo(0);
+        return;
+      }
+
+      const currentPx = readOpen() * PANEL;
+      let shouldOpen;
+      if (velocity > VELOCITY_SNAP)  shouldOpen = true;   // flick left
+      else if (velocity < -VELOCITY_SNAP) shouldOpen = false; // flick right
+      else shouldOpen = currentPx > DISTANCE_SNAP;
+
+      snapTo(shouldOpen ? 1 : 0);
+    };
+
+    const onPointerCancel = () => {
+      if (!dragging) return;
+      dragging = false;
+      snapTo(state === 'open' ? 1 : 0); // restore last committed
+    };
+
+    for (const el of [edgeGrab, scrim]) {
+      el.addEventListener('pointerdown',   onPointerDown);
+      el.addEventListener('pointermove',   onPointerMove);
+      el.addEventListener('pointerup',     onPointerUp);
+      el.addEventListener('pointercancel', onPointerCancel);
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && state === 'open') snapTo(0);
+    });
+    scrim.addEventListener('click', () => { if (state === 'open') snapTo(0); });
+
+    // Initial state — closed, no animation
+    writeOpen(0);
+    if ('inert' in gameList) gameList.inert = true;
+  </script>
+</body>
+</html>
