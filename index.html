@@ -219,13 +219,35 @@
     }
     .icon-btn.md { width: 44px; height: 44px; }
     .icon-btn.lg { width: 56px; height: 56px; }
-    .icon-btn.surface-light {
+    /* Balance widget "+" button — double-ring: 48×48 translucent outer,
+       32×32 solid white inner, 12px icon. Matches the YappBalance
+       gameView+balance=false surface pattern. */
+    .balance-add {
+      width: 48px;
+      height: 48px;
+      border: 0;
+      padding: 0;
+      background: var(--white-12);
+      border-radius: var(--radius-full);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      transition: transform 120ms ease;
+    }
+    .balance-add:active { transform: scale(0.96); }
+    .balance-add:focus-visible { outline: 2px solid var(--lime-flash); outline-offset: 2px; }
+    .balance-add-inner {
+      width: 32px;
+      height: 32px;
+      border-radius: var(--radius-full);
       background: var(--white);
       color: var(--deep-signal);
-      /* Figma Shadow/Default — two-layer elevation on light-on-dark buttons */
-      box-shadow:
-        0 1px 2px 0 rgba(0, 0, 0, 0.12),
-        0 0 1px 0 rgba(0, 0, 0, 0.18);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
     }
     .icon-btn.surface-outline {
       background: var(--white-12);
@@ -335,6 +357,7 @@
 
     .i24 { width: 24px; height: 24px; display: block; }
     .i20 { width: 20px; height: 20px; display: block; }
+    .i12 { width: 12px; height: 12px; display: block; }
 
 </style>
 </head>
@@ -346,10 +369,12 @@
       <!-- Header -->
       <header class="header" aria-label="Game header">
         <div class="header-lead">
-          <button class="icon-btn md surface-light" type="button" aria-label="Add funds (balance € 290,61)">
-            <svg class="i20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <path d="M10 4.5v11M4.5 10h11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-            </svg>
+          <button class="balance-add" type="button" aria-label="Add funds (balance € 290,61)">
+            <span class="balance-add-inner">
+              <svg class="i12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                <path d="M6 1.5v9M1.5 6h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+            </span>
           </button>
 
           <button class="rakeback" type="button" aria-label="Rakeback 0.84">
