@@ -204,6 +204,7 @@
       justify-content: space-between;
       gap: var(--gap-8);
     }
+    .header-lead,
     .header-aside {
       display: flex;
       align-items: center;
@@ -352,22 +353,24 @@
     <main class="screen" id="screen" role="main">
       <!-- Header -->
       <header class="header" aria-label="Game header">
-        <button class="icon-btn md surface-light" type="button" aria-label="Add funds (balance € 290,61)">
-          <svg class="i20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path d="M10 4.5v11M4.5 10h11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-          </svg>
-        </button>
-
-        <button class="rakeback" type="button" aria-label="Rakeback 0.84">
-          <span class="coin" aria-hidden="true">
-            <svg class="i20" viewBox="0 0 20 20" fill="none">
-              <circle cx="10" cy="10" r="9" stroke="var(--lime-flash)" stroke-width="1.5"/>
-              <rect x="10" y="4.5" width="7.778" height="7.778" rx="1"
-                    transform="rotate(45 10 4.5)" stroke="var(--lime-flash)" stroke-width="1.5"/>
+        <div class="header-lead">
+          <button class="icon-btn md surface-light" type="button" aria-label="Add funds (balance € 290,61)">
+            <svg class="i20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M10 4.5v11M4.5 10h11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
             </svg>
-          </span>
-          <span class="amount">0.84</span>
-        </button>
+          </button>
+
+          <button class="rakeback" type="button" aria-label="Rakeback 0.84">
+            <span class="coin" aria-hidden="true">
+              <svg class="i20" viewBox="0 0 20 20" fill="none">
+                <circle cx="10" cy="10" r="9" stroke="var(--lime-flash)" stroke-width="1.5"/>
+                <rect x="10" y="4.5" width="7.778" height="7.778" rx="1"
+                      transform="rotate(45 10 4.5)" stroke="var(--lime-flash)" stroke-width="1.5"/>
+              </svg>
+            </span>
+            <span class="amount">0.84</span>
+          </button>
+        </div>
 
         <div class="header-aside">
           <button class="icon-btn md surface-outline" type="button" aria-label="Info">
